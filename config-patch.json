@@ -2,15 +2,15 @@
   "Swarm": {
     "RelayService": {
       "Enabled": true,
-      "MaxReservations": 512,
-      "MaxCircuits": 32,
-      "MaxReservationsPerIP": 16,
-      "MaxReservationsPerASN": 64,
-      "BufferSize": 4096,
+      "MaxReservations": 2048,
+      "MaxCircuits": 512,
+      "MaxReservationsPerIP": 32,
+      "MaxReservationsPerASN": 256,
+      "BufferSize": 16384,
       "ReservationTTL": "1h0m0s",
       "Limit": {
-        "Duration": "2m0s",
-        "Data": 131072
+        "Duration": "5m0s",
+        "Data": 1048576
       }
     },
     "RelayClient": {
@@ -18,8 +18,8 @@
     },
     "ConnMgr": {
       "Type": "basic",
-      "LowWater": 256,
-      "HighWater": 512,
+      "LowWater": 1024,
+      "HighWater": 2048,
       "GracePeriod": "2m0s"
     },
     "DisableRelay": false
