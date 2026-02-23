@@ -41,7 +41,10 @@
       "/dns/relay.dev.fx.land/udp/4001/quic-v1/webtransport"
     ]
   },
-  "Reprovider": {
-    "Interval": "0"
+  "Provide": {
+    "Strategy": "",
+    "DHT": {
+      "Interval": "0"
+    }
   }
 }

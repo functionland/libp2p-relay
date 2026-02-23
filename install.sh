@@ -235,10 +235,15 @@ jq '. * {
       "/dns/relay.dev.fx.land/udp/4001/quic-v1/webtransport"
     ]
   },
-  "Reprovider": {
-    "Interval": "0"
+  "Provide": {
+    "Strategy": "",
+    "DHT": {
+      "Interval": "0"
+    }
   }
-}' "$KUBO_CONFIG" > "${KUBO_CONFIG}.tmp"
+}
+| del(.Reprovider)
+' "$KUBO_CONFIG" > "${KUBO_CONFIG}.tmp"
 mv "${KUBO_CONFIG}.tmp" "$KUBO_CONFIG"
 chown "$SERVICE_USER":"$SERVICE_USER" "$KUBO_CONFIG"
 
