@@ -17,6 +17,7 @@ usage() {
     echo "Usage: $0 --identity /path/to/identity.key --ssh-pubkey /path/to/key.pub --ssh-user USERNAME"
     echo ""
     echo "Sets up a production libp2p circuit relay v2 server using Kubo."
+    echo "Safe to re-run — idempotent. Updates config and restarts as needed."
     echo ""
     echo "Options:"
     echo "  --identity FILE     Path to the binary protobuf identity key file (required)"
@@ -90,7 +91,19 @@ fi
 
 echo "==> Installing libp2p Relay v2 (Kubo ${KUBO_VERSION})"
 
-# ─── 1. Detect architecture and download Kubo ───────────────────────────────
+# ─── 0. Ensure dependencies ─────────────────────────────────────────────────
+if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null; then
+    echo "==> Installing dependencies (jq, curl)..."
+    apt-get update -qq && apt-get install -y -qq jq curl >/dev/null
+fi
+
+# ─── 1. Stop existing service if running ─────────────────────────────────────
+if systemctl is-active --quiet relay.service 2>/dev/null; then
+    echo "==> Stopping existing relay service for update..."
+    systemctl stop relay.service
+fi
+
+# ─── 2. Detect architecture and download Kubo ───────────────────────────────
 ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64)  GOARCH="amd64" ;;
@@ -105,6 +118,7 @@ esac
 TARBALL="kubo_${KUBO_VERSION}_linux-${GOARCH}.tar.gz"
 DOWNLOAD_URL="https://dist.ipfs.tech/kubo/${KUBO_VERSION}/${TARBALL}"
 
+NEED_DOWNLOAD=false
 if command -v ipfs &>/dev/null; then
     INSTALLED_VERSION="$(ipfs version --number 2>/dev/null || true)"
     EXPECTED_VERSION="${KUBO_VERSION#v}"
@@ -112,10 +126,13 @@ if command -v ipfs &>/dev/null; then
         echo "    Kubo ${KUBO_VERSION} already installed, skipping download"
     else
         echo "    Upgrading Kubo from ${INSTALLED_VERSION} to ${KUBO_VERSION}"
+        NEED_DOWNLOAD=true
     fi
+else
+    NEED_DOWNLOAD=true
 fi
 
-if ! command -v ipfs &>/dev/null || [[ "$(ipfs version --number 2>/dev/null)" != "${KUBO_VERSION#v}" ]]; then
+if [[ "$NEED_DOWNLOAD" == "true" ]]; then
     echo "==> Downloading Kubo ${KUBO_VERSION} for ${GOARCH}..."
     TMP_DIR="$(mktemp -d)"
     trap 'rm -rf "$TMP_DIR"' EXIT
@@ -127,14 +144,18 @@ if ! command -v ipfs &>/dev/null || [[ "$(ipfs version --number 2>/dev/null)" !=
     echo "    Installed: $(ipfs version)"
 fi
 
-# ─── 2. Create service user ─────────────────────────────────────────────────
+# ─── 3. Create service user ─────────────────────────────────────────────────
 if ! id "$SERVICE_USER" &>/dev/null; then
     echo "==> Creating service user: $SERVICE_USER"
     useradd --system --shell /usr/sbin/nologin --home-dir "$IPFS_PATH" "$SERVICE_USER"
+else
+    echo "    Service user $SERVICE_USER already exists"
 fi
 
-# ─── 3. Initialize IPFS repo ────────────────────────────────────────────────
-if [[ ! -d "$IPFS_PATH" ]]; then
+# ─── 4. Initialize IPFS repo ────────────────────────────────────────────────
+KUBO_CONFIG="${IPFS_PATH}/config"
+
+if [[ ! -f "$KUBO_CONFIG" ]]; then
     echo "==> Initializing IPFS repo at $IPFS_PATH"
     mkdir -p "$IPFS_PATH"
     chown "$SERVICE_USER":"$SERVICE_USER" "$IPFS_PATH"
@@ -143,89 +164,87 @@ else
     echo "    IPFS repo already exists at $IPFS_PATH"
 fi
 
-# ─── 4. Import identity ─────────────────────────────────────────────────────
+# ─── 5. Import identity ─────────────────────────────────────────────────────
 echo "==> Importing identity from $IDENTITY_FILE"
 
-# Kubo blocks setting Identity.PrivKey via the CLI API, so we patch the
-# JSON config file directly using jq.
-if ! command -v jq &>/dev/null; then
-    echo "    Installing jq..."
-    apt-get update -qq && apt-get install -y -qq jq >/dev/null
-fi
-
-KUBO_CONFIG="${IPFS_PATH}/config"
 PRIVKEY_B64="$(base64 -w 0 < "$IDENTITY_FILE")"
 
-# Patch PrivKey directly into the config JSON
-jq --arg key "$PRIVKEY_B64" '.Identity.PrivKey = $key' "$KUBO_CONFIG" > "${KUBO_CONFIG}.tmp"
+# Check if identity already matches
+CURRENT_PEER_ID="$(jq -r '.Identity.PeerID // empty' "$KUBO_CONFIG" 2>/dev/null || true)"
+CURRENT_PRIVKEY="$(jq -r '.Identity.PrivKey // empty' "$KUBO_CONFIG" 2>/dev/null || true)"
+
+if [[ "$CURRENT_PEER_ID" == "$EXPECTED_PEER_ID" && "$CURRENT_PRIVKEY" == "$PRIVKEY_B64" ]]; then
+    echo "    Identity already up to date (PeerID: $EXPECTED_PEER_ID)"
+else
+    # Patch both PrivKey and PeerID into the config JSON.
+    # Kubo does NOT re-derive PeerID from PrivKey — both must match.
+    jq --arg key "$PRIVKEY_B64" --arg pid "$EXPECTED_PEER_ID" \
+      '.Identity.PrivKey = $key | .Identity.PeerID = $pid' \
+      "$KUBO_CONFIG" > "${KUBO_CONFIG}.tmp"
+    mv "${KUBO_CONFIG}.tmp" "$KUBO_CONFIG"
+    chown "$SERVICE_USER":"$SERVICE_USER" "$KUBO_CONFIG"
+    echo "    Private key and PeerID ($EXPECTED_PEER_ID) injected into $KUBO_CONFIG"
+fi
+
+# ─── 6. Apply relay-optimized configuration ─────────────────────────────────
+echo "==> Applying relay configuration..."
+
+# Use jq to deep-merge all relay settings into the config JSON in one shot.
+# This avoids issues with `ipfs config` refusing to create nested objects.
+# Safe to re-run: overwrites the same keys with the same values.
+jq '. * {
+  "Swarm": {
+    "RelayService": {
+      "Enabled": true,
+      "MaxReservations": 512,
+      "MaxCircuits": 32,
+      "MaxReservationsPerIP": 16,
+      "MaxReservationsPerASN": 64,
+      "BufferSize": 4096,
+      "ReservationTTL": "1h0m0s",
+      "Limit": {
+        "Duration": "2m0s",
+        "Data": 131072
+      }
+    },
+    "RelayClient": {
+      "Enabled": false
+    },
+    "DisableRelay": false,
+    "ConnMgr": {
+      "Type": "basic",
+      "LowWater": 256,
+      "HighWater": 512,
+      "GracePeriod": "2m0s"
+    }
+  },
+  "Addresses": {
+    "Swarm": [
+      "/ip4/0.0.0.0/tcp/4001",
+      "/ip6/::/tcp/4001",
+      "/ip4/0.0.0.0/udp/4001/quic-v1",
+      "/ip6/::/udp/4001/quic-v1",
+      "/ip4/0.0.0.0/udp/4001/quic-v1/webtransport",
+      "/ip6/::/udp/4001/quic-v1/webtransport"
+    ],
+    "API": "/ip4/127.0.0.1/tcp/5001",
+    "Gateway": "",
+    "Announce": [
+      "/dns/relay.dev.fx.land/tcp/4001",
+      "/dns/relay.dev.fx.land/udp/4001/quic-v1",
+      "/dns/relay.dev.fx.land/udp/4001/quic-v1/webtransport"
+    ]
+  },
+  "Reprovider": {
+    "Interval": "0"
+  }
+}' "$KUBO_CONFIG" > "${KUBO_CONFIG}.tmp"
 mv "${KUBO_CONFIG}.tmp" "$KUBO_CONFIG"
 chown "$SERVICE_USER":"$SERVICE_USER" "$KUBO_CONFIG"
 
-echo "    Private key injected into $KUBO_CONFIG"
-echo "    PeerID will be derived from key at daemon start."
-
-# ─── 5. Apply relay-optimized configuration ─────────────────────────────────
-echo "==> Applying relay configuration..."
-
-# Use individual ipfs config commands for reliability.
-# Each setting is applied independently so partial failures are visible.
-
-run_ipfs_config() {
-    sudo -u "$SERVICE_USER" IPFS_PATH="$IPFS_PATH" ipfs config "$@"
-}
-
-# Relay service settings
-run_ipfs_config --json Swarm.RelayService.Enabled true
-run_ipfs_config --json Swarm.RelayService.MaxReservations 512
-run_ipfs_config --json Swarm.RelayService.MaxCircuits 32
-run_ipfs_config --json Swarm.RelayService.MaxReservationsPerIP 16
-run_ipfs_config --json Swarm.RelayService.MaxReservationsPerASN 64
-run_ipfs_config --json Swarm.RelayService.BufferSize 4096
-run_ipfs_config Swarm.RelayService.ReservationTTL "1h0m0s"
-run_ipfs_config --json Swarm.RelayService.Limit.Data 131072
-run_ipfs_config Swarm.RelayService.Limit.Duration "2m0s"
-
-# Disable relay client (this node IS the relay)
-run_ipfs_config --json Swarm.RelayClient.Enabled false
-
-# Keep relay transport enabled
-run_ipfs_config --json Swarm.DisableRelay false
-
-# Connection manager
-run_ipfs_config --json Swarm.ConnMgr.Type '"basic"'
-run_ipfs_config --json Swarm.ConnMgr.LowWater 256
-run_ipfs_config --json Swarm.ConnMgr.HighWater 512
-run_ipfs_config Swarm.ConnMgr.GracePeriod "2m0s"
-
-# Listen addresses
-run_ipfs_config --json Addresses.Swarm '[
-  "/ip4/0.0.0.0/tcp/4001",
-  "/ip6/::/tcp/4001",
-  "/ip4/0.0.0.0/udp/4001/quic-v1",
-  "/ip6/::/udp/4001/quic-v1",
-  "/ip4/0.0.0.0/udp/4001/quic-v1/webtransport",
-  "/ip6/::/udp/4001/quic-v1/webtransport"
-]'
-
-# API (for metrics)
-run_ipfs_config Addresses.API "/ip4/127.0.0.1/tcp/5001"
-
-# Disable gateway
-run_ipfs_config Addresses.Gateway ""
-
-# Announce addresses
-run_ipfs_config --json Addresses.Announce '[
-  "/dns/relay.dev.fx.land/tcp/4001",
-  "/dns/relay.dev.fx.land/udp/4001/quic-v1",
-  "/dns/relay.dev.fx.land/udp/4001/quic-v1/webtransport"
-]'
-
-# Disable reprovider (relay-only, no content to provide)
-run_ipfs_config Reprovider.Interval "0"
-
 echo "    Configuration applied."
 
-# ─── 6. SSH hardening ────────────────────────────────────────────────────────
+# ─── 7. SSH hardening ────────────────────────────────────────────────────────
 echo "==> Hardening SSH..."
 
 # Install the public key for the specified user
@@ -248,7 +267,7 @@ fi
 chmod 600 "$AUTHORIZED_KEYS"
 chown -R "${SSH_USER}":"$(id -gn "$SSH_USER")" "$SSH_DIR"
 
-# Back up sshd_config before modifying
+# Back up sshd_config before modifying (only on first run)
 SSHD_CONFIG="/etc/ssh/sshd_config"
 if [[ ! -f "${SSHD_CONFIG}.bak.pre-relay" ]]; then
     cp "$SSHD_CONFIG" "${SSHD_CONFIG}.bak.pre-relay"
@@ -300,7 +319,6 @@ echo "    SSH hardening drop-in written to ${SSHD_DROPIN_DIR}/50-relay-hardening
 
 # Ensure the main sshd_config includes drop-ins (most modern distros do by default)
 if ! grep -q "^Include.*/etc/ssh/sshd_config.d/" "$SSHD_CONFIG"; then
-    # Prepend the Include directive
     sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' "$SSHD_CONFIG"
     echo "    Added Include directive to sshd_config"
 fi
@@ -317,21 +335,15 @@ else
     exit 1
 fi
 
-# ─── 7. Firewall rules ──────────────────────────────────────────────────────
+# ─── 8. Firewall rules ──────────────────────────────────────────────────────
 echo "==> Configuring firewall (ufw)..."
 if command -v ufw &>/dev/null; then
-    # Allow libp2p swarm port (TCP + UDP for QUIC)
+    # All ufw commands are idempotent — safe to re-run
     ufw allow 4001/tcp comment "libp2p relay TCP"
     ufw allow 4001/udp comment "libp2p relay QUIC/WebTransport"
-
-    # Ensure SSH is allowed (safety net before enabling)
     ufw allow 22/tcp comment "SSH"
-
-    # API port 5001 stays localhost-only (systemd config binds 127.0.0.1),
-    # explicitly deny external access as defense-in-depth
     ufw deny in on any to any port 5001 comment "Block external IPFS API"
 
-    # Enable ufw if not already active
     if ! ufw status | grep -q "Status: active"; then
         echo "y" | ufw enable
     fi
@@ -342,7 +354,7 @@ else
     echo "    Make sure ports 4001/tcp and 4001/udp are open, and 5001 is blocked externally."
 fi
 
-# ─── 8. Kernel tuning for high connection counts ────────────────────────────
+# ─── 9. Kernel tuning for high connection counts ────────────────────────────
 echo "==> Applying sysctl tuning..."
 SYSCTL_CONF="/etc/sysctl.d/99-libp2p-relay.conf"
 cat > "$SYSCTL_CONF" <<'SYSCTL'
@@ -359,15 +371,15 @@ SYSCTL
 sysctl --system --quiet
 echo "    Sysctl tuning applied."
 
-# ─── 9. Install systemd service ─────────────────────────────────────────────
+# ─── 10. Install systemd service ────────────────────────────────────────────
 echo "==> Installing systemd service..."
 install -m 0644 "${SCRIPT_DIR}/relay.service" /etc/systemd/system/relay.service
 systemctl daemon-reload
 
-# ─── 10. Enable and start ───────────────────────────────────────────────────
+# ─── 11. Enable and start ───────────────────────────────────────────────────
 echo "==> Enabling and starting relay service..."
 systemctl enable relay.service
-systemctl start relay.service
+systemctl restart relay.service
 
 # Wait a moment for startup
 sleep 3
