@@ -145,12 +145,24 @@ fi
 
 # ─── 4. Import identity ─────────────────────────────────────────────────────
 echo "==> Importing identity from $IDENTITY_FILE"
-PRIVKEY_B64="$(base64 -w 0 < "$IDENTITY_FILE")"
-sudo -u "$SERVICE_USER" IPFS_PATH="$IPFS_PATH" ipfs config Identity.PrivKey "$PRIVKEY_B64"
 
-# Verify PeerID — Kubo derives it from the private key at startup,
-# but we can read back the config to confirm the key was set.
-echo "    Private key imported. PeerID will be verified after daemon start."
+# Kubo blocks setting Identity.PrivKey via the CLI API, so we patch the
+# JSON config file directly using jq.
+if ! command -v jq &>/dev/null; then
+    echo "    Installing jq..."
+    apt-get update -qq && apt-get install -y -qq jq >/dev/null
+fi
+
+KUBO_CONFIG="${IPFS_PATH}/config"
+PRIVKEY_B64="$(base64 -w 0 < "$IDENTITY_FILE")"
+
+# Patch PrivKey directly into the config JSON
+jq --arg key "$PRIVKEY_B64" '.Identity.PrivKey = $key' "$KUBO_CONFIG" > "${KUBO_CONFIG}.tmp"
+mv "${KUBO_CONFIG}.tmp" "$KUBO_CONFIG"
+chown "$SERVICE_USER":"$SERVICE_USER" "$KUBO_CONFIG"
+
+echo "    Private key injected into $KUBO_CONFIG"
+echo "    PeerID will be derived from key at daemon start."
 
 # ─── 5. Apply relay-optimized configuration ─────────────────────────────────
 echo "==> Applying relay configuration..."
@@ -246,14 +258,22 @@ fi
 # Apply hardened SSH settings via a drop-in to avoid clobbering the main config
 SSHD_DROPIN_DIR="/etc/ssh/sshd_config.d"
 mkdir -p "$SSHD_DROPIN_DIR"
-cat > "${SSHD_DROPIN_DIR}/50-relay-hardening.conf" <<'SSHD'
+
+# If SSH_USER is root, allow root login with key only; otherwise disable root login
+if [[ "$SSH_USER" == "root" ]]; then
+    ROOT_LOGIN_SETTING="PermitRootLogin prohibit-password"
+else
+    ROOT_LOGIN_SETTING="PermitRootLogin no"
+fi
+
+cat > "${SSHD_DROPIN_DIR}/50-relay-hardening.conf" <<SSHD
 # Disable password authentication — key-only (.pem) access
 PasswordAuthentication no
 ChallengeResponseAuthentication no
 KbdInteractiveAuthentication no
 
-# Disable root login (use your SSH_USER + sudo)
-PermitRootLogin no
+# Root login policy (based on --ssh-user)
+${ROOT_LOGIN_SETTING}
 
 # Only allow pubkey auth
 PubkeyAuthentication yes
