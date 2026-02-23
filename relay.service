@@ -1,0 +1,28 @@
+[Unit]
+Description=libp2p Relay v2 (Kubo)
+Documentation=https://docs.ipfs.tech
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=libp2p-relay
+Group=libp2p-relay
+Environment="IPFS_PATH=/var/lib/libp2p-relay"
+ExecStart=/usr/local/bin/ipfs daemon
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/libp2p-relay
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,47 @@
+{
+  "Swarm": {
+    "RelayService": {
+      "Enabled": true,
+      "MaxReservations": 512,
+      "MaxCircuits": 32,
+      "MaxReservationsPerIP": 16,
+      "MaxReservationsPerASN": 64,
+      "BufferSize": 4096,
+      "ReservationTTL": "1h0m0s",
+      "Limit": {
+        "Duration": "2m0s",
+        "Data": 131072
+      }
+    },
+    "RelayClient": {
+      "Enabled": false
+    },
+    "ConnMgr": {
+      "Type": "basic",
+      "LowWater": 256,
+      "HighWater": 512,
+      "GracePeriod": "2m0s"
+    },
+    "DisableRelay": false
+  },
+  "Addresses": {
+    "Swarm": [
+      "/ip4/0.0.0.0/tcp/4001",
+      "/ip6/::/tcp/4001",
+      "/ip4/0.0.0.0/udp/4001/quic-v1",
+      "/ip6/::/udp/4001/quic-v1",
+      "/ip4/0.0.0.0/udp/4001/quic-v1/webtransport",
+      "/ip6/::/udp/4001/quic-v1/webtransport"
+    ],
+    "API": "/ip4/127.0.0.1/tcp/5001",
+    "Gateway": "",
+    "Announce": [
+      "/dns/relay.dev.fx.land/tcp/4001",
+      "/dns/relay.dev.fx.land/udp/4001/quic-v1",
+      "/dns/relay.dev.fx.land/udp/4001/quic-v1/webtransport"
+    ]
+  },
+  "Reprovider": {
+    "Interval": "0"
+  }
+}
