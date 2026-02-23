@@ -325,12 +325,12 @@ fi
 
 # Validate config before restarting
 if sshd -t 2>/dev/null; then
-    systemctl restart sshd
+    systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service
     echo "    SSH restarted with key-only authentication"
 else
     echo "ERROR: sshd config validation failed! Reverting..."
     rm -f "${SSHD_DROPIN_DIR}/50-relay-hardening.conf"
-    systemctl restart sshd
+    systemctl restart ssh.service 2>/dev/null || systemctl restart sshd.service
     echo "    Reverted SSH changes. Please check sshd_config manually."
     exit 1
 fi
