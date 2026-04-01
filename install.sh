@@ -14,7 +14,7 @@ SSH_PUBKEY_FILE=""
 SSH_USER=""
 
 usage() {
-    echo "Usage: $0 --identity /path/to/identity.key --ssh-pubkey /path/to/key.pub --ssh-user USERNAME"
+    echo "Usage: $0 --identity /path/to/identity.key [--ssh-pubkey /path/to/key.pub --ssh-user USERNAME]"
     echo ""
     echo "Sets up a production libp2p circuit relay v2 server using Kubo."
     echo "Safe to re-run — idempotent. Updates config and restarts as needed."
@@ -22,10 +22,12 @@ usage() {
     echo "Options:"
     echo "  --identity FILE     Path to the binary protobuf identity key file (required)"
     echo "                      (the .key file from go-libp2p-relay-daemon)"
-    echo "  --ssh-pubkey FILE   Path to SSH public key (.pub) for key-only auth (required)"
+    echo "  --ssh-pubkey FILE   Path to SSH public key (.pub) for key-only auth (optional)"
     echo "                      (corresponds to your .pem private key)"
-    echo "  --ssh-user USER     SSH user to configure key-based auth for (required)"
+    echo "  --ssh-user USER     SSH user to configure key-based auth for (optional)"
     echo "  --help              Show this help message"
+    echo ""
+    echo "If --ssh-pubkey and --ssh-user are omitted, SSH hardening is skipped."
     exit 1
 }
 
@@ -63,24 +65,25 @@ if [[ ! -f "$IDENTITY_FILE" ]]; then
     exit 1
 fi
 
-if [[ -z "$SSH_PUBKEY_FILE" ]]; then
-    echo "Error: --ssh-pubkey is required"
+SKIP_SSH=false
+if [[ -z "$SSH_PUBKEY_FILE" && -z "$SSH_USER" ]]; then
+    SKIP_SSH=true
+    echo "    --ssh-pubkey and --ssh-user not provided, skipping SSH hardening"
+elif [[ -z "$SSH_PUBKEY_FILE" || -z "$SSH_USER" ]]; then
+    echo "Error: --ssh-pubkey and --ssh-user must both be provided (or both omitted)"
     usage
 fi
 
-if [[ ! -f "$SSH_PUBKEY_FILE" ]]; then
-    echo "Error: SSH public key file not found: $SSH_PUBKEY_FILE"
-    exit 1
-fi
+if [[ "$SKIP_SSH" == "false" ]]; then
+    if [[ ! -f "$SSH_PUBKEY_FILE" ]]; then
+        echo "Error: SSH public key file not found: $SSH_PUBKEY_FILE"
+        exit 1
+    fi
 
-if [[ -z "$SSH_USER" ]]; then
-    echo "Error: --ssh-user is required"
-    usage
-fi
-
-if ! id "$SSH_USER" &>/dev/null; then
-    echo "Error: SSH user '$SSH_USER' does not exist on this system"
-    exit 1
+    if ! id "$SSH_USER" &>/dev/null; then
+        echo "Error: SSH user '$SSH_USER' does not exist on this system"
+        exit 1
+    fi
 fi
 
 # ─── Must run as root ────────────────────────────────────────────────────────
@@ -249,7 +252,10 @@ chown "$SERVICE_USER":"$SERVICE_USER" "$KUBO_CONFIG"
 
 echo "    Configuration applied."
 
-# ─── 7. SSH hardening ────────────────────────────────────────────────────────
+# ─── 7. SSH hardening (optional) ─────────────────────────────────────────────
+if [[ "$SKIP_SSH" == "true" ]]; then
+    echo "==> Skipping SSH hardening (no --ssh-pubkey/--ssh-user provided)"
+else
 echo "==> Hardening SSH..."
 
 # Install the public key for the specified user
@@ -339,6 +345,7 @@ else
     echo "    Reverted SSH changes. Please check sshd_config manually."
     exit 1
 fi
+fi  # end SKIP_SSH
 
 # ─── 8. Firewall rules ──────────────────────────────────────────────────────
 echo "==> Configuring firewall (ufw)..."
