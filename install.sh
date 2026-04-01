@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ─── Configuration ───────────────────────────────────────────────────────────
-KUBO_VERSION="v0.39.0"
+KUBO_VERSION="v0.40.1"
 IPFS_PATH="/var/lib/libp2p-relay"
 SERVICE_USER="libp2p-relay"
 EXPECTED_PEER_ID="12D3KooWDRrBaAfPwsGJivBoUw5fE7ZpDiyfUjqgiURq2DEcL835"
