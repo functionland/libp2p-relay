@@ -199,27 +199,34 @@ jq '. * {
   "Swarm": {
     "RelayService": {
       "Enabled": true,
-      "MaxReservations": 2048,
-      "MaxCircuits": 512,
-      "MaxReservationsPerIP": 32,
-      "MaxReservationsPerASN": 256,
+      "MaxReservations": 4096,
+      "MaxCircuits": 1024,
+      "MaxReservationsPerIP": 64,
+      "MaxReservationsPerASN": 512,
       "BufferSize": 16384,
-      "ReservationTTL": "1h0m0s",
+      "ReservationTTL": "2h0m0s",
       "Limit": {
-        "Duration": "5m0s",
-        "Data": 1048576
+        "Duration": "30m0s",
+        "Data": 16777216
       }
     },
     "RelayClient": {
       "Enabled": false
     },
     "DisableRelay": false,
+    "EnableHolePunching": false,
     "ConnMgr": {
       "Type": "basic",
-      "LowWater": 1024,
-      "HighWater": 2048,
+      "LowWater": 2048,
+      "HighWater": 4096,
       "GracePeriod": "2m0s"
     }
+  },
+  "AutoNAT": {
+    "ServiceMode": "enabled"
+  },
+  "Routing": {
+    "Type": "dhtserver"
   },
   "Addresses": {
     "Swarm": [
@@ -236,12 +243,20 @@ jq '. * {
       "/dns/relay.dev.fx.land/tcp/4001",
       "/dns/relay.dev.fx.land/udp/4001/quic-v1",
       "/dns/relay.dev.fx.land/udp/4001/quic-v1/webtransport"
-    ]
+    ],
+    "AppendAnnounce": [],
+    "NoAnnounce": []
+  },
+  "Gateway": {
+    "NoFetch": true
+  },
+  "Datastore": {
+    "GCPeriod": "6h"
   },
   "Provide": {
     "Strategy": "",
     "DHT": {
-      "Interval": "0"
+      "Interval": "22h"
     }
   }
 }
@@ -371,16 +386,17 @@ echo "==> Applying sysctl tuning..."
 SYSCTL_CONF="/etc/sysctl.d/99-libp2p-relay.conf"
 cat > "$SYSCTL_CONF" <<'SYSCTL'
 # libp2p relay — tuning for high connection counts
-net.core.somaxconn = 4096
-net.core.netdev_max_backlog = 4096
-net.ipv4.tcp_max_syn_backlog = 4096
+net.core.somaxconn = 8192
+net.core.netdev_max_backlog = 8192
+net.ipv4.tcp_max_syn_backlog = 8192
 net.ipv4.ip_local_port_range = 1024 65535
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 15
-net.core.rmem_max = 2500000
-net.core.wmem_max = 2500000
+net.core.rmem_max = 8388608
+net.core.wmem_max = 8388608
+net.netfilter.nf_conntrack_max = 262144
 SYSCTL
-sysctl --system --quiet
+sysctl --system --quiet 2>/dev/null || sysctl --system --quiet
 echo "    Sysctl tuning applied."
 
 # ─── 10. Install systemd service ────────────────────────────────────────────
