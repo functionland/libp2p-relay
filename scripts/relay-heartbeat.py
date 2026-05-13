@@ -147,7 +147,14 @@ def main():
     req = urllib.request.Request(
         DISCOVERY_API_URL + "/heartbeat",
         method="POST",
-        headers={"content-type": "application/json"},
+        headers={
+            "content-type": "application/json",
+            # Explicit User-Agent: Cloudflare's Bot Fight Mode + WAF
+            # heuristics flag Python's default "Python-urllib/X.Y" UA and
+            # return HTTP 403 / error 1010 before the request reaches the
+            # Worker. A descriptive UA passes BFM at default settings.
+            "user-agent": "fula-discovery-relay-heartbeat/1.0",
+        },
         data=json.dumps(body).encode("utf-8"),
     )
     try:
