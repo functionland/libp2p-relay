@@ -1,0 +1,18 @@
+[Unit]
+Description=Fula Discovery API heartbeat for this relay
+After=network-online.target libp2p-relay.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=libp2p-relay
+Group=libp2p-relay
+Environment=DISCOVERY_API_URL=https://discovery.fula.network
+Environment=KUBO_CONFIG_PATH=/var/lib/libp2p-relay/config
+Environment=KUBO_API_URL=http://127.0.0.1:5001
+ExecStart=/usr/bin/python3 /usr/local/bin/relay-heartbeat.py
+# Failure is non-fatal — next timer tick retries.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,54 @@
+name = "fula-discovery"
+main = "src/index.ts"
+compatibility_date = "2026-05-13"
+
+# Web Crypto Ed25519 has been GA on Workers since 2024 and is on by default
+# for any recent compatibility_date — no compatibility_flags needed. (The
+# `experimental` flag is a deprecated alias that the API now rejects.)
+
+# Custom domain bound via the Cloudflare dashboard after first deploy:
+# Workers → fula-discovery → Custom Domains → add discovery.fx.land
+
+# KV namespaces — IDs are filled in by `wrangler kv:namespace create` and
+# must be pasted here. The bindings (RELAYS, BOXES) are what src/ code reads.
+[[kv_namespaces]]
+binding = "RELAYS"
+id = "24bc2e63b1894e7f993455b0fdc55142"
+
+[[kv_namespaces]]
+binding = "BOXES"
+id = "d070d4c3441340f386242a2da7dac1f0"
+
+# Cron Trigger: cleanup-only, runs once per hour. Removes box records older
+# than 7 days. The Worker does NOT pull health from relay kubo APIs (that
+# would require either public kubo APIs — insecure — or Cloudflare Tunnel on
+# each relay VM — complex). Instead, relays push their own health via
+# POST /heartbeat from a systemd timer on the relay VM (see scripts/).
+[triggers]
+crons = ["0 * * * *"]
+
+# Tunable defaults. Override per-environment via Cloudflare dashboard →
+# Workers → fula-discovery → Settings → Variables (no redeploy needed).
+# These values are calibrated for ~100 edges on the FREE tier (1k KV
+# writes/day budget). For paid-tier deploys, you can shorten them for
+# higher freshness; the math is documented in README.md.
+[vars]
+# Box write-on-change refresh window. Boxes that don't change state for
+# this long get a single write to keep lastSeen fresh. 4h × 100 boxes ≈
+# 600 writes/day.
+LIVENESS_REFRESH_MIN = "240"
+# Relay refresh window — short, so /relays' stale-filter keeps the relay
+# visible between writes. 5m × 1 relay ≈ 288 writes/day.
+RELAY_LIVENESS_REFRESH_MIN = "5"
+# /find-box tier-1 cutoff. Boxes with lastSeen older than this fall to
+# tier 2 (construct from /relays). 15m so heartbeats every 5m count fresh.
+BOX_STALE_MIN = "15"
+# /relays exclude threshold. Must be longer than RELAY_LIVENESS_REFRESH_MIN
+# plus margin so a relay doesn't disappear between writes.
+RELAY_STALE_MIN = "7"
+
+# Logging in development:
+# `wrangler tail` streams logs from the deployed Worker.
+
+# Observability for free tier:
+# Cloudflare provides default request analytics; no extra config needed.

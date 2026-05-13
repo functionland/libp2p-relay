@@ -1,0 +1,8 @@
+{
+    "dnsName": "relay.dev.fx.land",
+    "peerId": "12D3KooWDRrBaAfPwsGJivBoUw5fE7ZpDiyfUjqgiURq2DEcL835",
+    "addr": "/dns/relay.dev.fx.land/tcp/4001",
+    "multiaddr": "/dns/relay.dev.fx.land/tcp/4001/p2p/12D3KooWDRrBaAfPwsGJivBoUw5fE7ZpDiyfUjqgiURq2DEcL835",
+    "createdAt": "2026-05-13T00:00:00.000Z",
+    "lastSeen": "2026-05-13T00:00:00.000Z"
+}
