@@ -24,6 +24,10 @@ mode = "smart"
 pattern = "discovery.fula.network"
 zone_name = "fula.network"
 custom_domain = true
+# Route is active and excluded from preview deployments — mirrors the
+# remote so `wrangler deploy` doesn't strip these flags.
+enabled = true
+previews_enabled = false
 
 # KV namespaces — IDs are filled in by `wrangler kv:namespace create` and
 # must be pasted here. The bindings (RELAYS, BOXES) are what src/ code reads.
