@@ -17,5 +17,6 @@
     "typescript": "^5.5.0",
     "vitest": "^2.0.0",
     "wrangler": "^4.0.0"
-  }
+  },
+  "packageManager": "yarn@3.8.0+sha512.e1261f49ba7bb7f2f33aae452e5234e4a95c738f2aece917152019950ef64e52b542f3e503ffa0f0b3cf41b3d185ac1d7721dc501908e7c6cfa67ba06a082745"
 }

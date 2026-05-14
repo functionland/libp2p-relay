@@ -260,7 +260,7 @@ wrangler tail
 
 The Worker has Cloudflare's default request analytics. For meaningful production telemetry you should add:
 
-- **`/healthz` enrichment** to return `{ relays_healthy: N, boxes_active_15m: M }` for external uptime monitors.
+- **`/healthz`** returns `{ relays_healthy, boxes_active_5m, boxes_active_4h, boxes_active_8h, boxes_active_24h, boxes_active_exact, ok, timestamp }` for external uptime monitors. The 5m bucket uses the configurable `BOX_STALE_MIN` cutoff and tracks recent state changes; the 4h/8h/24h buckets are fixed windows aligned to `LIVENESS_REFRESH_MIN` (default 4h) and approximate "boxes that heartbeated in the last window".
 - **External monitor** (BetterStack, Pingdom, or UptimeRobot — all have free tiers) hitting `/healthz` every minute. Page if `/relays` returns `[]` for more than 5 minutes.
 - **Heartbeat-rejection alert**: tail `wrangler tail` for "heartbeat rejected" patterns. A spike means either canonical-JSON drift, clock skew, or compromised key.
 

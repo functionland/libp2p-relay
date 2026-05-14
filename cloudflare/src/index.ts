@@ -73,11 +73,29 @@ async function handleHealthz(env: Env): Promise<Response> {
   const boxRecs = await Promise.all(
     boxList.keys.map(k => env.BOXES.get<BoxRecord>(k.name, 'json')),
   );
+  // Multiple windows so a single endpoint can answer different operational
+  // questions. The 5m bucket uses the configurable BOX_STALE_MIN cutoff;
+  // 4h/8h/24h are fixed and meaningful relative to LIVENESS_REFRESH_MIN
+  // (default 4h), the write-on-change refresh boundary. A box whose state
+  // hasn't changed in N hours still gets a KV write at each 4h boundary,
+  // so the 4h+ counts approximate "boxes that have heartbeated in the
+  // last window" rather than "boxes whose state changed recently".
+  const STALE_MS_4H = 4 * 3600_000;
+  const STALE_MS_8H = 8 * 3600_000;
+  const STALE_MS_24H = 24 * 3600_000;
   let boxesActive = 0;
+  let boxesActive4h = 0;
+  let boxesActive8h = 0;
+  let boxesActive24h = 0;
   for (const b of boxRecs) {
     if (!b) continue;
     const lastSeen = Date.parse(b.lastSeen);
-    if (!isNaN(lastSeen) && now - lastSeen <= BOX_STALE_MS) boxesActive++;
+    if (isNaN(lastSeen)) continue;
+    const age = now - lastSeen;
+    if (age <= BOX_STALE_MS) boxesActive++;
+    if (age <= STALE_MS_4H) boxesActive4h++;
+    if (age <= STALE_MS_8H) boxesActive8h++;
+    if (age <= STALE_MS_24H) boxesActive24h++;
   }
   // If we hit the page limit, the count is approximate.
   const boxesActiveExact = boxList.list_complete;
@@ -87,6 +105,9 @@ async function handleHealthz(env: Env): Promise<Response> {
       ok: relaysHealthy > 0,
       relays_healthy: relaysHealthy,
       boxes_active_5m: boxesActive,
+      boxes_active_4h: boxesActive4h,
+      boxes_active_8h: boxesActive8h,
+      boxes_active_24h: boxesActive24h,
       boxes_active_exact: boxesActiveExact,
       timestamp: new Date(now).toISOString(),
     },
