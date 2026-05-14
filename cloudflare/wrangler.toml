@@ -86,6 +86,6 @@ persist = true
 invocation_logs = true
 
 [observability.traces]
-enabled = false
+enabled = true
 head_sampling_rate = 1
 persist = true
