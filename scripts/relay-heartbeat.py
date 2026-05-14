@@ -154,6 +154,9 @@ def main():
             # return HTTP 403 / error 1010 before the request reaches the
             # Worker. A descriptive UA passes BFM at default settings.
             "user-agent": "fula-discovery-relay-heartbeat/1.0",
+            # X-Fula-Client lets a Cloudflare WAF rule allow our requests
+            # and block unknown traffic — see cloudflare/README.md.
+            "x-fula-client": "relay",
         },
         data=json.dumps(body).encode("utf-8"),
     )
