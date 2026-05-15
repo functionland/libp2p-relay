@@ -1,0 +1,8 @@
+{
+    "dnsName": "relay.fula.network",
+    "peerId": "12D3KooWLghRj2oKZE3aa9WggQ65wxyaooAriDQi4rzTsKpLoPLb",
+    "addr": "/dns/relay.fula.network/tcp/4001",
+    "multiaddr": "/dns/relay.fula.network/tcp/4001/p2p/12D3KooWLghRj2oKZE3aa9WggQ65wxyaooAriDQi4rzTsKpLoPLb",
+    "createdAt": "2026-05-15T00:00:00.000Z",
+    "lastSeen": "2026-05-15T00:00:00.000Z"
+}
