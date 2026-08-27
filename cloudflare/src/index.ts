@@ -8,13 +8,17 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // CORS preflight — the box-app reads from a different origin.
+    // CORS preflight — the box-app and FxBlox Web (https://blox.fx.land) read
+    // from a different origin. Browsers preflight because clients send the
+    // custom `x-fula-client` header (which the Cloudflare WAF rule keys on);
+    // the WAF must therefore exempt OPTIONS requests — see README.
     if (request.method === 'OPTIONS') {
       return new Response(null, {
+        status: 204,
         headers: {
           'access-control-allow-origin': '*',
           'access-control-allow-methods': 'GET, POST, OPTIONS',
-          'access-control-allow-headers': 'content-type',
+          'access-control-allow-headers': 'content-type, x-fula-client',
           'access-control-max-age': '86400',
         },
       });

@@ -281,3 +281,19 @@ The 3-tier fallback in the box-app (live → cache → hardcoded) means Workers 
 ## Tech stack
 
 TypeScript, Web Crypto API (Ed25519) via the `experimental` compatibility flag. Web Standard Fetch. No external crypto libs.
+
+## Browser clients (FxBlox Web) and the WAF
+
+FxBlox Web (`https://blox.fx.land`) calls `/relays` and `/find-box` from the browser. Browsers send a CORS
+**preflight** (`OPTIONS`) before any request that carries the custom `x-fula-client` header, and a preflight
+can never carry that header itself. Two things must hold:
+
+1. The Worker answers `OPTIONS` with `access-control-allow-headers: content-type, x-fula-client` (done in
+   `src/index.ts`).
+2. The Cloudflare WAF rule that requires `x-fula-client` must **exempt `OPTIONS` requests** (or requests whose
+   `Origin` is `https://blox.fx.land` / `https://functionland.github.io`) — a dashboard change, not code.
+   Verified 2026-08-27: `OPTIONS /relays` with `Origin: https://blox.fx.land` currently returns **403** from the WAF.
+
+Relay heartbeats now include `data.addrs` (the relay's public swarm addrs from `ipfs id`, including the
+WebTransport `/certhash/...` components browsers need). `/relays` returns them as `addrs[]`, and `/find-box`
+tier 2 emits one circuit address per relay address (WebTransport first, seeded TCP last).

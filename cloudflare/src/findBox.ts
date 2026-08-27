@@ -48,11 +48,25 @@ export async function handleFindBox(req: Request, env: Env): Promise<Response> {
     relayList.keys.map(k => env.RELAYS.get<RelayRecord>(k.name, 'json'))
   );
   const addrs: { multiaddr: string }[] = [];
+  const seen = new Set<string>();
+  const push = (relayAddr: string) => {
+    const m = `${relayAddr}/p2p-circuit/p2p/${body.peerId}`;
+    if (seen.has(m)) return;
+    seen.add(m);
+    addrs.push({ multiaddr: m });
+  };
   for (const r of relays) {
     if (!r) continue;
     const lastSeen = Date.parse(r.lastSeen);
     if (isNaN(lastSeen) || now - lastSeen > RELAY_STALE_MS) continue;
-    addrs.push({ multiaddr: `${r.multiaddr}/p2p-circuit/p2p/${body.peerId}` });
+    // One circuit address per public relay address the relay itself reports
+    // (only its own /p2p/<relayPeerId> addrs). Browser-dialable WebTransport
+    // addrs (with certhash) first, then QUIC/TCP, then the seeded TCP
+    // multiaddr as the always-present fallback for native clients.
+    const own = (r.addrs ?? []).filter(a => a.endsWith(`/p2p/${r.peerId}`));
+    for (const a of own) if (a.includes('/webtransport/certhash/')) push(a);
+    for (const a of own) if (!a.includes('/webtransport/certhash/')) push(a);
+    push(r.multiaddr);
   }
 
   return Response.json(addrs, {

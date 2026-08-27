@@ -135,6 +135,31 @@ describe('POST /find-box', () => {
     ]);
   });
 
+  it('tier 2: emits one circuit addr per relay-reported public addr, WebTransport (certhash) first, seeded TCP last', async () => {
+    const peerId = '12D3KooWBOX5';
+    const wt = '/dns/wt.fx.land/udp/4001/quic-v1/webtransport/certhash/uEiA/certhash/uEiB/p2p/PW';
+    const quic = '/dns/wt.fx.land/udp/4001/quic-v1/p2p/PW';
+    const tcp = '/dns/wt.fx.land/tcp/4001/p2p/PW';
+    env._RELAYS._seed('relay:wt.fx.land', {
+      dnsName: 'wt.fx.land',
+      peerId: 'PW',
+      addr: '/dns/wt.fx.land/tcp/4001',
+      multiaddr: tcp,
+      // deliberately unsorted + one foreign addr that must be ignored
+      addrs: [quic, '/dns/other.fx.land/tcp/4001/p2p/SOMEONE_ELSE', tcp, wt],
+      lastSeen: nowIso(),
+      lastTs: Date.now(),
+    } satisfies RelayRecord);
+
+    const r = await handleFindBox(makeFindBoxRequest(peerId), env);
+    const j = await r.json<Array<{ multiaddr: string }>>();
+    expect(j.map(x => x.multiaddr)).toEqual([
+      `${wt}/p2p-circuit/p2p/${peerId}`,
+      `${quic}/p2p-circuit/p2p/${peerId}`,
+      `${tcp}/p2p-circuit/p2p/${peerId}`,  // deduped with the seeded multiaddr
+    ]);
+  });
+
   it('returns empty array when neither tier yields anything', async () => {
     const r = await handleFindBox(makeFindBoxRequest('12D3KooWGhost'), env);
     const j = await r.json<unknown[]>();

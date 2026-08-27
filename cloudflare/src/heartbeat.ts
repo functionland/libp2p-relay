@@ -109,11 +109,19 @@ export async function handleHeartbeat(req: Request, env: Env): Promise<Response>
       lastTs: signedTsMs,
       reservationCount: body.data.reservationCount ?? existing.reservationCount,
       circuitCount: body.data.circuitCount ?? existing.circuitCount,
+      // Public swarm addrs (WebTransport certhashes etc.) — only replaced when
+      // the heartbeat carries them, so an older heartbeat script never wipes
+      // addrs that a newer one already published.
+      ...(body.data.addrs !== undefined ? { addrs: body.data.addrs } : {}),
     };
 
     const countsChanged =
       existing.reservationCount !== candidate.reservationCount ||
       existing.circuitCount !== candidate.circuitCount;
+    // Certhashes rotate every ~14 days; a changed addr set must be written
+    // immediately or browsers keep dialing with stale hashes.
+    const addrsChanged =
+      body.data.addrs !== undefined && !arraysEqual(existing.addrs ?? [], body.data.addrs);
     // Relays use a SHORTER refresh window than boxes. The `/relays`
     // stale-filter excludes records older than `RELAY_STALE_MIN` (default 7m);
     // if we only wrote every 4h like boxes, the relay would disappear from
@@ -122,7 +130,7 @@ export async function handleHeartbeat(req: Request, env: Env): Promise<Response>
     const livenessStale =
       nowMs - Date.parse(existing.lastSeen) > relayLivenessRefreshMs(env);
 
-    if (countsChanged || livenessStale) {
+    if (countsChanged || addrsChanged || livenessStale) {
       await env.RELAYS.put(key, JSON.stringify(candidate));
     }
     return Response.json({ ok: true }, { headers: { 'access-control-allow-origin': '*' } });
