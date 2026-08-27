@@ -41,6 +41,25 @@ class PublicAddrsTest(unittest.TestCase):
         self.assertEqual(relay_heartbeat.public_addrs(None), [])
         self.assertEqual(relay_heartbeat.public_addrs([]), [])
 
+    def test_announced_hosts_restricts_to_operator_controlled_hosts(self):
+        announce = [
+            "/dns/relay.dev.fx.land/tcp/4001",
+            "/dns/relay.dev.fx.land/udp/4001/quic-v1/webtransport",
+            "/ip4/40.233.107.227/tcp/4001",
+        ]
+        hosts = relay_heartbeat.announced_hosts(announce)
+        self.assertEqual(hosts, {"relay.dev.fx.land", "40.233.107.227"})
+        # A peer-observed address on a foreign host must NOT be published even though it is "public".
+        observed_evil = f"/ip4/203.0.113.9/udp/4001/quic-v1/p2p/{PEER}"
+        foreign_dns = f"/dns/evil.example/tcp/4001/p2p/{PEER}"
+        self.assertEqual(
+            relay_heartbeat.public_addrs([WT, TCP, PUBLIC_IP4, observed_evil, foreign_dns], hosts),
+            sorted({WT, TCP, PUBLIC_IP4}),
+        )
+        # Without an announce list there is nothing to restrict to → plain public filter.
+        self.assertIn(observed_evil, relay_heartbeat.public_addrs([observed_evil], set()))
+        self.assertEqual(relay_heartbeat.announced_hosts(None), set())
+
     def test_cap(self):
         many = [f"/dns/r{i}.fx.land/tcp/4001/p2p/{PEER}" for i in range(100)]
         self.assertEqual(len(relay_heartbeat.public_addrs(many)), relay_heartbeat.MAX_ADDRS)
