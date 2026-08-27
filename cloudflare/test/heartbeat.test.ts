@@ -257,6 +257,13 @@ describe('handleHeartbeat (relay)', () => {
     const stored2 = await env._RELAYS.get<RelayRecord>('relay:test.fx.land', 'json');
     expect(stored2!.addrs).toEqual([tcp, rotated]);
 
+    // Malformed addrs are rejected with 400 and do not touch the record.
+    for (const bad of [['javascript:alert(1)'], ['/p2p-circuit/p2p/X'], [123], Array.from({ length: 33 }, (_, i) => `/dns/r${i}.fx.land/tcp/4001/p2p/${kp.peerId}`)]) {
+      const malformed = await buildRelayHeartbeat({ kp, dnsName: 'test.fx.land', timestamp: nowIso(+10), reservationCount: 5, addrs: bad as any });
+      expect((await handleHeartbeat(makeRequest(malformed), env)).status).toBe(400);
+    }
+    expect((await env._RELAYS.get<RelayRecord>('relay:test.fx.land', 'json'))!.addrs).toEqual([tcp, rotated]);
+
     // A heartbeat WITHOUT addrs (older script) keeps the stored set.
     const legacy = await buildRelayHeartbeat({ kp, dnsName: 'test.fx.land', timestamp: nowIso(+3), reservationCount: 6 });
     expect((await handleHeartbeat(makeRequest(legacy), env)).status).toBe(200);

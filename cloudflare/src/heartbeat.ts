@@ -102,6 +102,13 @@ export async function handleHeartbeat(req: Request, env: Env): Promise<Response>
       console.warn(`relay heartbeat replay/out-of-order from ${body.data.dnsName}`);
       return Response.json({ error: 'stale heartbeat' }, { status: 409 });
     }
+    // Only the relay's own key can sign a heartbeat for its dnsName, but keep the
+    // stored addrs well-formed regardless: multiaddr strings on dns/ip hosts,
+    // no circuit addrs, bounded count/length.
+    if (body.data.addrs !== undefined && !validRelayAddrs(body.data.addrs)) {
+      console.warn(`relay heartbeat from ${body.data.dnsName} carries malformed addrs; rejecting`);
+      return Response.json({ error: 'invalid addrs' }, { status: 400 });
+    }
 
     const candidate: RelayRecord = {
       ...existing,
@@ -137,6 +144,17 @@ export async function handleHeartbeat(req: Request, env: Env): Promise<Response>
   }
 
   return Response.json({ error: 'type/data mismatch' }, { status: 400 });
+}
+
+const MAX_RELAY_ADDRS = 32;
+const MAX_ADDR_LEN = 512;
+const RELAY_ADDR_RE = /^\/(dns|dns4|dns6|ip4|ip6)\/[^/]+\//;
+
+export function validRelayAddrs(addrs: unknown): addrs is string[] {
+  if (!Array.isArray(addrs) || addrs.length > MAX_RELAY_ADDRS) return false;
+  return addrs.every(
+    a => typeof a === 'string' && a.length <= MAX_ADDR_LEN && RELAY_ADDR_RE.test(a) && !a.includes('/p2p-circuit'),
+  );
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {
