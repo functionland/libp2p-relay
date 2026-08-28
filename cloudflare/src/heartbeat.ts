@@ -102,6 +102,13 @@ export async function handleHeartbeat(req: Request, env: Env): Promise<Response>
       console.warn(`relay heartbeat replay/out-of-order from ${body.data.dnsName}`);
       return Response.json({ error: 'stale heartbeat' }, { status: 409 });
     }
+    // Only the relay's own key can sign a heartbeat for its dnsName, but keep the
+    // stored addrs well-formed regardless: multiaddr strings on dns/ip hosts,
+    // no circuit addrs, bounded count/length.
+    if (body.data.addrs !== undefined && !validRelayAddrs(body.data.addrs)) {
+      console.warn(`relay heartbeat from ${body.data.dnsName} carries malformed addrs; rejecting`);
+      return Response.json({ error: 'invalid addrs' }, { status: 400 });
+    }
 
     const candidate: RelayRecord = {
       ...existing,
@@ -109,11 +116,19 @@ export async function handleHeartbeat(req: Request, env: Env): Promise<Response>
       lastTs: signedTsMs,
       reservationCount: body.data.reservationCount ?? existing.reservationCount,
       circuitCount: body.data.circuitCount ?? existing.circuitCount,
+      // Public swarm addrs (WebTransport certhashes etc.) — only replaced when
+      // the heartbeat carries them, so an older heartbeat script never wipes
+      // addrs that a newer one already published.
+      ...(body.data.addrs !== undefined ? { addrs: body.data.addrs } : {}),
     };
 
     const countsChanged =
       existing.reservationCount !== candidate.reservationCount ||
       existing.circuitCount !== candidate.circuitCount;
+    // Certhashes rotate every ~14 days; a changed addr set must be written
+    // immediately or browsers keep dialing with stale hashes.
+    const addrsChanged =
+      body.data.addrs !== undefined && !arraysEqual(existing.addrs ?? [], body.data.addrs);
     // Relays use a SHORTER refresh window than boxes. The `/relays`
     // stale-filter excludes records older than `RELAY_STALE_MIN` (default 7m);
     // if we only wrote every 4h like boxes, the relay would disappear from
@@ -122,13 +137,24 @@ export async function handleHeartbeat(req: Request, env: Env): Promise<Response>
     const livenessStale =
       nowMs - Date.parse(existing.lastSeen) > relayLivenessRefreshMs(env);
 
-    if (countsChanged || livenessStale) {
+    if (countsChanged || addrsChanged || livenessStale) {
       await env.RELAYS.put(key, JSON.stringify(candidate));
     }
     return Response.json({ ok: true }, { headers: { 'access-control-allow-origin': '*' } });
   }
 
   return Response.json({ error: 'type/data mismatch' }, { status: 400 });
+}
+
+const MAX_RELAY_ADDRS = 32;
+const MAX_ADDR_LEN = 512;
+const RELAY_ADDR_RE = /^\/(dns|dns4|dns6|ip4|ip6)\/[^/]+\//;
+
+export function validRelayAddrs(addrs: unknown): addrs is string[] {
+  if (!Array.isArray(addrs) || addrs.length > MAX_RELAY_ADDRS) return false;
+  return addrs.every(
+    a => typeof a === 'string' && a.length <= MAX_ADDR_LEN && RELAY_ADDR_RE.test(a) && !a.includes('/p2p-circuit'),
+  );
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {

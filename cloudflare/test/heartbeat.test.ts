@@ -170,11 +170,13 @@ describe('handleHeartbeat (relay)', () => {
     timestamp?: string;
     reservationCount?: number;
     circuitCount?: number;
+    addrs?: string[];
   }): Promise<HeartbeatBody> {
     const ts = opts.timestamp ?? nowIso();
     const data: any = { type: 'relay', dnsName: opts.dnsName };
     if (opts.reservationCount !== undefined) data.reservationCount = opts.reservationCount;
     if (opts.circuitCount !== undefined) data.circuitCount = opts.circuitCount;
+    if (opts.addrs !== undefined) data.addrs = opts.addrs;
     const sig = await signCanonical(opts.kp.privateKey, {
       peerId: opts.kp.peerId,
       timestamp: ts,
@@ -221,5 +223,52 @@ describe('handleHeartbeat (relay)', () => {
     const stored = await env._RELAYS.get<RelayRecord>('relay:test.fx.land', 'json');
     expect(stored!.reservationCount).toBe(5);
     expect(stored!.lastTs).toBe(Date.parse(body.timestamp));
+  });
+
+  it('stores relay addrs (WebTransport certhashes) and rewrites only when they change', async () => {
+    const wt = `/dns/test.fx.land/udp/4001/quic-v1/webtransport/certhash/uEiA/certhash/uEiB/p2p/${kp.peerId}`;
+    const tcp = `/dns/test.fx.land/tcp/4001/p2p/${kp.peerId}`;
+    env._RELAYS._seed('relay:test.fx.land', {
+      dnsName: 'test.fx.land',
+      peerId: kp.peerId,
+      addr: '/dns/test.fx.land/tcp/4001',
+      multiaddr: tcp,
+      reservationCount: 5,
+      lastSeen: nowIso(),  // fresh → no liveness-driven write
+      createdAt: nowIso(),
+    } satisfies RelayRecord);
+
+    // First heartbeat with addrs → written even though counts/liveness are unchanged.
+    const first = await buildRelayHeartbeat({ kp, dnsName: 'test.fx.land', reservationCount: 5, addrs: [tcp, wt] });
+    expect((await handleHeartbeat(makeRequest(first), env)).status).toBe(200);
+    const stored = await env._RELAYS.get<RelayRecord>('relay:test.fx.land', 'json');
+    expect(stored!.addrs).toEqual([tcp, wt]);
+    const rawAfterFirst = env._RELAYS._raw('relay:test.fx.land');
+
+    // Same addrs (different order) + same counts + fresh → no write.
+    const same = await buildRelayHeartbeat({ kp, dnsName: 'test.fx.land', timestamp: nowIso(+1), reservationCount: 5, addrs: [wt, tcp] });
+    expect((await handleHeartbeat(makeRequest(same), env)).status).toBe(200);
+    expect(env._RELAYS._raw('relay:test.fx.land')).toBe(rawAfterFirst);
+
+    // Certhash rotation → new addr set → immediate write.
+    const rotated = wt.replace('uEiB', 'uEiC');
+    const changed = await buildRelayHeartbeat({ kp, dnsName: 'test.fx.land', timestamp: nowIso(+2), reservationCount: 5, addrs: [tcp, rotated] });
+    expect((await handleHeartbeat(makeRequest(changed), env)).status).toBe(200);
+    const stored2 = await env._RELAYS.get<RelayRecord>('relay:test.fx.land', 'json');
+    expect(stored2!.addrs).toEqual([tcp, rotated]);
+
+    // Malformed addrs are rejected with 400 and do not touch the record.
+    for (const bad of [['javascript:alert(1)'], ['/p2p-circuit/p2p/X'], [123], Array.from({ length: 33 }, (_, i) => `/dns/r${i}.fx.land/tcp/4001/p2p/${kp.peerId}`)]) {
+      const malformed = await buildRelayHeartbeat({ kp, dnsName: 'test.fx.land', timestamp: nowIso(+10), reservationCount: 5, addrs: bad as any });
+      expect((await handleHeartbeat(makeRequest(malformed), env)).status).toBe(400);
+    }
+    expect((await env._RELAYS.get<RelayRecord>('relay:test.fx.land', 'json'))!.addrs).toEqual([tcp, rotated]);
+
+    // A heartbeat WITHOUT addrs (older script) keeps the stored set.
+    const legacy = await buildRelayHeartbeat({ kp, dnsName: 'test.fx.land', timestamp: nowIso(+3), reservationCount: 6 });
+    expect((await handleHeartbeat(makeRequest(legacy), env)).status).toBe(200);
+    const stored3 = await env._RELAYS.get<RelayRecord>('relay:test.fx.land', 'json');
+    expect(stored3!.addrs).toEqual([tcp, rotated]);
+    expect(stored3!.reservationCount).toBe(6);
   });
 });

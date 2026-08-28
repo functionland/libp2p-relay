@@ -2,3 +2,7 @@
 /cloudflare/.wrangler
 cloudflare/package-lock.json
 /cloudflare/fula-discovery
+
+# Python bytecode — build output, never source.
+__pycache__/
+*.py[cod]

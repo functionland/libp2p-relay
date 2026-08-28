@@ -23,6 +23,12 @@ export interface RelayRecord {
   lastTs?: number;    // epoch ms of last accepted SIGNED heartbeat timestamp (replay guard)
   reservationCount?: number;
   circuitCount?: number;
+  // Public swarm addresses the relay reports from `ipfs id` (full multiaddrs
+  // incl. /p2p/<peerId>), e.g. the WebTransport listener WITH its
+  // /certhash/... components. Browser clients (FxBlox Web) need the certhash
+  // to dial; TCP/QUIC entries are kept for native clients. Absent until the
+  // relay's heartbeat script is upgraded to report them.
+  addrs?: string[];
   // `createdAt`: ISO 8601, set by the seeding wrangler put. Used by /relays
   // to keep a freshly-seeded relay visible until its first heartbeat lands.
   createdAt?: string;
@@ -52,7 +58,7 @@ export interface HeartbeatBody {
   timestamp: string;  // ISO 8601 — rejected if more than 5 min from server clock
   data:
     | { type: 'box'; reservedOn: string[]; libp2pAddrs: string[]; clusterPeerId?: string }
-    | { type: 'relay'; dnsName: string; reservationCount?: number; circuitCount?: number };
+    | { type: 'relay'; dnsName: string; reservationCount?: number; circuitCount?: number; addrs?: string[] };
   // base64 ed25519 signature over the canonical JSON of
   // { peerId, timestamp, data } (keys sorted alphabetically).
   signature: string;

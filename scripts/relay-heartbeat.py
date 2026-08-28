@@ -108,6 +108,69 @@ def kubo_counts(api_url):
         return None, None
 
 
+_PRIVATE_IP4 = re.compile(
+    r"^/ip4/(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.)"
+)
+_PRIVATE_IP6 = re.compile(r"^/ip6/(::1$|::1/|fe80:|fc|fd)", re.IGNORECASE)
+MAX_ADDRS = 32
+
+
+_HOST_RE = re.compile(r"^/(dns|dns4|dns6|ip4|ip6)/([^/]+)")
+
+
+def announced_hosts(announce_addrs):
+    """Host components (dns names / IPs) of Addresses.Announce — the set the
+    relay OPERATOR controls. Used to restrict which `ipfs id` addrs are
+    published: kubo's `id` output also contains peer-OBSERVED addresses, which a
+    malicious peer can influence; restricting to announced hosts keeps an
+    attacker from having browsers dial an address of their choosing."""
+    hosts = set()
+    for a in announce_addrs or []:
+        m = _HOST_RE.match(a) if isinstance(a, str) else None
+        if m:
+            hosts.add(m.group(2).lower())
+    return hosts
+
+
+def public_addrs(addresses, allowed_hosts=None):
+    """Keep the relay's publicly dialable swarm addrs from `ipfs id` (full
+    multiaddrs incl. /p2p/<peerId>): /dns*, public /ip4, public /ip6.
+    Drops loopback/private/link-local addrs and circuit addrs. When
+    `allowed_hosts` (from Addresses.Announce) is non-empty, only addrs on those
+    hosts are kept. The WebTransport entries carry the /certhash/... components
+    browsers need."""
+    out = []
+    for a in addresses or []:
+        if not isinstance(a, str) or "/p2p-circuit" in a:
+            continue
+        m = _HOST_RE.match(a)
+        if not m:
+            continue
+        if allowed_hosts and m.group(2).lower() not in allowed_hosts:
+            continue
+        if a.startswith(("/dns/", "/dns4/", "/dns6/")):
+            out.append(a)
+        elif a.startswith("/ip4/") and not _PRIVATE_IP4.match(a):
+            out.append(a)
+        elif a.startswith("/ip6/") and not _PRIVATE_IP6.match(a):
+            out.append(a)
+    return sorted(set(out))[:MAX_ADDRS]
+
+
+def kubo_addrs(api_url, allowed_hosts=None):
+    """Fetch this relay's swarm addresses from the local kubo API (`ipfs id`).
+    Returns a sorted list of public multiaddrs (possibly empty — an empty list
+    is published so stale addrs get cleared), or None on failure (the
+    heartbeat then omits `addrs`, leaving the stored set untouched)."""
+    try:
+        req = urllib.request.Request(api_url + "/api/v0/id", method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return public_addrs(data.get("Addresses"), allowed_hosts)
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError, KeyError):
+        return None
+
+
 def main():
     try:
         key, peer_id, announce = load_identity(KUBO_CONFIG_PATH)
@@ -117,6 +180,7 @@ def main():
 
     dns_name = derive_dns_name(announce)
     reservation_count, circuit_count = kubo_counts(KUBO_API_URL)
+    addrs = kubo_addrs(KUBO_API_URL, announced_hosts(announce))
 
     # Bind once: two calls can straddle a second boundary and produce a
     # malformed timestamp combining seconds from now-1 with ms from now.
@@ -128,6 +192,12 @@ def main():
         data["reservationCount"] = reservation_count
     if circuit_count is not None:
         data["circuitCount"] = circuit_count
+    if addrs is not None:
+        # Public swarm addrs incl. WebTransport certhashes — consumed by
+        # /relays and /find-box so browser clients can dial the relay. An
+        # empty list is sent deliberately so the Worker clears stale addrs;
+        # only a kubo API failure (None) omits the field.
+        data["addrs"] = addrs
 
     signing_input = canonical_json({
         "peerId": peer_id,
